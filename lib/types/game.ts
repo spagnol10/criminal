@@ -220,8 +220,9 @@ export interface ServerToClientEvents {
   "game:event_ended": (eventId: string) => void;
   "game:evidence": (evidence: Evidence) => void;
   "game:suspicion_update": (profiles: SuspicionProfile[]) => void;
-  "game:finished": (data: { winner: TeamWinner; players: Player[]; stats: PostGameStats }) => void;
+  "game:finished": (data: { winner: TeamWinner; players: Player[]; stats?: PostGameStats }) => void;
   "game:map": (map: GameMap) => void;
+  "game:replay": (replay: unknown) => void;
   "chat:message": (message: ChatMessage) => void;
   "player:disconnected": (playerId: string) => void;
   "player:reconnected": (playerId: string) => void;

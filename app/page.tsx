@@ -302,7 +302,13 @@ export default function HomePage() {
           MIN 4 · MAX 12 JOGADORES
         </p>
 
-        <div className="text-center mt-3">
+        <div className="text-center mt-3 flex flex-col gap-2">
+          <button
+            onClick={() => router.push("/solo")}
+            className="text-gray-500 hover:text-gray-300 text-[10px] uppercase tracking-widest font-semibold transition-colors border border-white/6 rounded-lg py-2 px-4 hover:border-white/12"
+          >
+            🤖 Jogar Solo (vs Bots)
+          </button>
           <button
             onClick={() => router.push("/stats")}
             className="text-gray-700 hover:text-gray-400 text-[10px] uppercase tracking-widest font-semibold transition-colors"

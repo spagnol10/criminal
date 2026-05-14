@@ -1,5 +1,5 @@
 // ============================================================
-// SERVIDOR SOCKET.IO — Lógica em memória (sem DB externo)
+// SERVIDOR SOCKET.IO v2 — Autoritativo, Modular, Anti-Cheat
 // ============================================================
 
 import { createServer } from "http";
@@ -19,43 +19,54 @@ import {
   resolveVotes,
   checkWinCondition,
   getRandomEvent,
-  getNarratorMessage,
   generateRoomCode,
   generateId,
   PHASE_DURATIONS,
+  getRandomMap,
+  generateEvidence,
+  ROLE_TEAM,
 } from "../lib/gameEngine";
+import {
+  RoomState,
+  createPlayer,
+  projectVisibleState,
+  getAlivePlayers,
+} from "./engine/stateManager";
+import {
+  validateNightAction,
+  validateVote,
+  validateChat,
+  validateAbility,
+  tickCooldowns,
+  recordAction,
+} from "./engine/antiCheat";
+import {
+  // applySuspicion is used in suspicionEngine internally
+  analyzeVotesPostRound,
+  analyzeSilentPlayers,
+  getTopSuspects,
+} from "./engine/suspicionEngine";
+import {
+  generateNarration,
+  buildNarratorContext,
+} from "./engine/narratorEngine";
+import {
+  initReplay,
+  recordReplayEvent,
+  finalizeReplay,
+  getReplay,
+} from "./engine/replayEngine";
 
-// ---- Estruturas em Memória ----
-interface RoomState {
-  code: string;
-  hostId: string;
-  players: Map<string, Player & { role: PlayerRole }>;
-  phase: GamePhase;
-  round: number;
-  maxPlayers: number;
-  isPrivate: boolean;
-  nightActions: NightAction[];
-  votes: Record<string, string>;
-  phaseTimer: NodeJS.Timeout | null;
-  reconnectTokens: Map<string, string>; // token -> playerId
-}
-
+// ---- Memória ------------------------------------------------
 const rooms = new Map<string, RoomState>();
 const playerRoom = new Map<string, string>(); // socketId -> roomCode
 
-// ---- Helpers ----
-function getRoomPlayers(room: RoomState): Player[] {
-  return Array.from(room.players.values()).map(({ role, ...p }) => ({  // eslint-disable-line @typescript-eslint/no-unused-vars
-    ...p,
-    role: undefined,
-  }));
-}
-
+// ---- Helpers ------------------------------------------------
 function getRoomInfo(room: RoomState): RoomInfo {
   return {
     code: room.code,
     hostId: room.hostId,
-    players: getRoomPlayers(room),
+    players: projectVisibleState(room) as unknown as Player[],
     maxPlayers: room.maxPlayers,
     isPrivate: room.isPrivate,
     phase: room.phase,
@@ -71,116 +82,217 @@ function clearPhaseTimer(room: RoomState) {
   room.phaseTimer = null;
 }
 
-// ---- Transição de Fases ----
+function sendNarration(io: Server, room: RoomState, lines: string[]) {
+  lines.forEach((line) => {
+    io.to(room.code).emit("chat:message", {
+      id: generateId(),
+      playerId: "narrator",
+      playerNickname: "Narrador",
+      content: line,
+      timestamp: Date.now(),
+      type: "narrator",
+    });
+  });
+}
+
+// ---- Transição de Fases ------------------------------------
 function advancePhase(io: Server, room: RoomState) {
   clearPhaseTimer(room);
 
-  const winner = checkWinCondition(Array.from(room.players.values()));
+  const winner = checkWinCondition(Array.from(room._players.values()));
   if (winner) {
     room.phase = "FINISHED";
-    const players = Array.from(room.players.values());
+    const players = Array.from(room._players.values());
+
+    // Finalizar replay
+    const finalRoles: Record<string, PlayerRole> = {};
+    players.forEach((p) => { finalRoles[p.id] = p.role; });
+    const replay = finalizeReplay(room.code, winner, finalRoles);
+
     io.to(room.code).emit("game:finished", { winner, players });
+    if (replay) io.to(room.code).emit("game:replay" as never, replay);
     return;
   }
 
   const transitions: Record<GamePhase, GamePhase> = {
-    WAITING: "STARTING",
-    STARTING: "NIGHT",
-    NIGHT: "DAY",
-    DAY: "VOTING",
-    VOTING: "RESULT",
-    RESULT: "NIGHT",
-    FINISHED: "FINISHED",
+    WAITING: "STARTING", STARTING: "NIGHT",
+    NIGHT: "DAY", DAY: "VOTING",
+    VOTING: "RESULT", RESULT: "NIGHT", FINISHED: "FINISHED",
   };
-
   const next = transitions[room.phase];
   room.phase = next;
 
   const duration = PHASE_DURATIONS[next];
   io.to(room.code).emit("game:phase_changed", { phase: next, timer: duration });
 
-  // Narrador
+  recordReplayEvent(room.code, {
+    ts: Date.now(), round: room.round, phase: next,
+    type: "phase_change", meta: { duration },
+  });
+
+  // ── NIGHT ──────────────────────────────────────────────────
+  if (next === "NIGHT") {
+    room.votes = {};
+    room.round++;
+    room.chatCount = {};
+    tickCooldowns(room);
+
+    sendNarration(io, room, generateNarration(
+      buildNarratorContext(room, "NIGHT")
+    ));
+  }
+
+  // ── DAY ────────────────────────────────────────────────────
   if (next === "DAY") {
+    // Resolução noturna
+    const activeEventIds = room.activeEventIds;
     const nightResult = resolveNightActions(
-      Array.from(room.players.values()),
-      room.nightActions
+      Array.from(room._players.values()),
+      room.nightActions,
+      activeEventIds,
     );
+
+    // Aplicar morte
     if (nightResult.killedId) {
-      const victim = room.players.get(nightResult.killedId);
-      if (victim) victim.isAlive = false;
+      const victim = room._players.get(nightResult.killedId);
+      if (victim) {
+        victim.isAlive = false;
+        recordReplayEvent(room.code, {
+          ts: Date.now(), round: room.round, phase: "DAY",
+          type: "player_killed",
+          targetId: victim.id, targetNickname: victim.nickname,
+        });
+      }
     }
+
     io.to(room.code).emit("game:night_result", nightResult);
 
-    const event = getRandomEvent();
-    if (event) io.to(room.code).emit("game:event", event);
-
-    const msg = getNarratorMessage("DAY", nightResult);
-    io.to(room.code).emit("chat:message", {
-      id: generateId(),
-      playerId: "narrator",
-      playerNickname: "Narrador",
-      content: msg,
-      timestamp: Date.now(),
-      type: "narrator",
+    // Evidências procedurais
+    const evidence = generateEvidence(
+      Array.from(room._players.values()),
+      nightResult.killedId,
+      room.round,
+    );
+    evidence.forEach((ev) => {
+      room.evidence.push(ev);
+      io.to(room.code).emit("game:evidence" as never, ev);
+      recordReplayEvent(room.code, {
+        ts: Date.now(), round: room.round, phase: "DAY",
+        type: "evidence_found", meta: { evidenceType: ev.type, isFake: ev.isFake },
+      });
     });
+
+    // Evento dinâmico
+    const event = getRandomEvent();
+    if (event) {
+      room.activeEventIds = [event.id];
+      io.to(room.code).emit("game:event", event);
+      recordReplayEvent(room.code, {
+        ts: Date.now(), round: room.round, phase: "DAY",
+        type: "event_triggered", meta: { eventId: event.id, eventTitle: event.title },
+      });
+    } else {
+      room.activeEventIds = [];
+    }
+
+    // Suspicion: analisar silêncio
+    analyzeSilentPlayers(room, room.round);
+
+    // Emitir suspicion update
+    const suspicionData = Array.from(room._players.values()).map((p) => ({
+      playerId: p.id, score: room.suspicionProfiles.get(p.id) ?? 0,
+    }));
+    io.to(room.code).emit("game:suspicion_update" as never, suspicionData);
+
+    // Narrador contextual
+    const topSuspects = getTopSuspects(room, 2);
+    const nicknames = new Map<string, string>();
+    for (const [id, p] of room._players.entries()) nicknames.set(id, p.nickname);
+
+    const narCtx = buildNarratorContext(room, "DAY", {
+      killedNickname: nightResult.killedNickname,
+      savedNickname: nightResult.savedId
+        ? (room._players.get(nightResult.savedId)?.nickname ?? null)
+        : null,
+      activeEventTitle: event?.title ?? null,
+      topSuspects,
+      playerNicknames: nicknames,
+    });
+    sendNarration(io, room, generateNarration(narCtx));
 
     room.nightActions = [];
     broadcastRoom(io, room);
   }
 
-  if (next === "NIGHT") {
-    room.votes = {};
-    room.round++;
-    io.to(room.code).emit("chat:message", {
-      id: generateId(),
-      playerId: "narrator",
-      playerNickname: "Narrador",
-      content: getNarratorMessage("NIGHT"),
-      timestamp: Date.now(),
-      type: "narrator",
-    });
-  }
-
+  // ── VOTING ─────────────────────────────────────────────────
   if (next === "VOTING") {
-    io.to(room.code).emit("chat:message", {
-      id: generateId(),
-      playerId: "narrator",
-      playerNickname: "Narrador",
-      content: getNarratorMessage("VOTING"),
-      timestamp: Date.now(),
-      type: "narrator",
-    });
+    sendNarration(io, room, generateNarration(
+      buildNarratorContext(room, "VOTING")
+    ));
   }
 
+  // ── RESULT ─────────────────────────────────────────────────
   if (next === "RESULT") {
-    const voteResult = resolveVotes(Array.from(room.players.values()), room.votes);
+    const roundVotes = { ...room.votes };
+    const voteResult = resolveVotes(Array.from(room._players.values()), room.votes);
+
     if (voteResult.eliminatedId) {
-      const eliminated = room.players.get(voteResult.eliminatedId);
-      if (eliminated) eliminated.isAlive = false;
+      const eliminated = room._players.get(voteResult.eliminatedId);
+      if (eliminated) {
+        // Fantasma: 50% chance de reviver
+        if (eliminated.role === "ghost" && !eliminated.hasUsedAbility && Math.random() < 0.5) {
+          eliminated.hasUsedAbility = true;
+          sendNarration(io, room, [
+            `👻 ${eliminated.nickname} voltou dos mortos! O Fantasma ressuscitou!`
+          ]);
+        } else {
+          eliminated.isAlive = false;
+          recordReplayEvent(room.code, {
+            ts: Date.now(), round: room.round, phase: "RESULT",
+            type: "player_eliminated",
+            targetId: eliminated.id, targetNickname: eliminated.nickname,
+            meta: { role: eliminated.role, votes: voteResult.tallies },
+          });
+        }
+      }
     }
-    io.to(room.code).emit("game:vote_result", voteResult);
-    io.to(room.code).emit("chat:message", {
-      id: generateId(),
-      playerId: "narrator",
-      playerNickname: "Narrador",
-      content: getNarratorMessage("RESULT", voteResult),
-      timestamp: Date.now(),
-      type: "narrator",
-    });
-    broadcastRoom(io, room);
-  }
 
-  // Verificar vitória após result
-  if (next === "RESULT") {
-    const w = checkWinCondition(Array.from(room.players.values()));
+    io.to(room.code).emit("game:vote_result", voteResult);
+
+    // Análise de votos pós-rodada (suspicion)
+    const killerIds = new Set(
+      Array.from(room._players.values())
+        .filter((p) => ROLE_TEAM[p.role] === "killers")
+        .map((p) => p.id)
+    );
+    analyzeVotesPostRound(room, killerIds, roundVotes, voteResult.eliminatedId, room.round);
+
+    // Narrador resultado
+    const nicknames = new Map<string, string>();
+    for (const [id, p] of room._players.entries()) nicknames.set(id, p.nickname);
+    const narCtx = buildNarratorContext(room, "RESULT", {
+      eliminatedNickname: voteResult.eliminatedNickname,
+      eliminatedRole: voteResult.eliminatedRole as PlayerRole | null,
+      wasTie: voteResult.wasTie,
+      playerNicknames: nicknames,
+    });
+    sendNarration(io, room, generateNarration(narCtx));
+    broadcastRoom(io, room);
+
+    // Verificar vitória após eliminação
+    const w = checkWinCondition(Array.from(room._players.values()));
     if (w) {
       setTimeout(() => {
         room.phase = "FINISHED";
+        const finalRoles: Record<string, PlayerRole> = {};
+        Array.from(room._players.values()).forEach((p) => { finalRoles[p.id] = p.role; });
+        const replay = finalizeReplay(room.code, w, finalRoles);
         io.to(room.code).emit("game:finished", {
           winner: w,
-          players: Array.from(room.players.values()),
+          players: Array.from(room._players.values()),
         });
-      }, 3000);
+        if (replay) io.to(room.code).emit("game:replay" as never, replay);
+      }, 3500);
       return;
     }
   }
@@ -190,42 +302,24 @@ function advancePhase(io: Server, room: RoomState) {
   }
 }
 
-// ---- Iniciar Servidor ----
+// ---- Socket Server -----------------------------------------
 const httpServer = createServer();
 const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
-  cors: {
-    origin: process.env.CORS_ORIGIN ?? "*",
-    methods: ["GET", "POST"],
-  },
+  cors: { origin: process.env.CORS_ORIGIN ?? "*", methods: ["GET", "POST"] },
 });
 
 io.on("connection", (socket) => {
-  console.log(`[+] Connected: ${socket.id}`);
+  console.log(`[+] ${socket.id}`);
 
-  // ---- Criar Sala ----
+  // ── Criar Sala ─────────────────────────────────────────────
   socket.on("room:create", ({ nickname, avatar, maxPlayers, isPrivate }, cb) => {
     const code = generateRoomCode();
-    const playerId = socket.id;
-
-    const player: Player & { role: PlayerRole } = {
-      id: playerId,
-      nickname,
-      avatar,
-      role: "citizen",
-      isAlive: true,
-      isHost: true,
-      isConnected: true,
-      votedFor: null,
-      suspicionScore: 0,
-      isSpectator: false,
-      hasUsedAbility: false,
-      abilityCooldown: 0,
-    };
+    const player = createPlayer(socket.id, nickname, avatar, true);
 
     const room: RoomState = {
       code,
-      hostId: playerId,
-      players: new Map([[playerId, player]]),
+      hostId: socket.id,
+      _players: new Map([[socket.id, player]]),
       phase: "WAITING",
       round: 0,
       maxPlayers: Math.min(Math.max(maxPlayers, 4), 12),
@@ -233,117 +327,123 @@ io.on("connection", (socket) => {
       nightActions: [],
       votes: {},
       phaseTimer: null,
+      evidence: [],
+      suspicionProfiles: new Map(),
+      matchEvents: [],
+      map: getRandomMap(),
+      activeEventIds: [],
+      voteHistory: {},
+      chatCount: {},
+      roundStartedAt: Date.now(),
+      lastActionTimes: new Map(),
       reconnectTokens: new Map(),
     };
 
     rooms.set(code, room);
-    playerRoom.set(playerId, code);
+    playerRoom.set(socket.id, code);
     socket.join(code);
-
-    cb({ room: getRoomInfo(room), player: { ...player } });
+    cb({ room: getRoomInfo(room), player: player as unknown as Player });
   });
 
-  // ---- Entrar em Sala ----
+  // ── Entrar em Sala ─────────────────────────────────────────
   socket.on("room:join", ({ code, nickname, avatar }, cb) => {
     const room = rooms.get(code.toUpperCase());
     if (!room) return cb({ error: "Sala não encontrada." });
     if (room.phase !== "WAITING") return cb({ error: "Partida já iniciada." });
-    if (room.players.size >= room.maxPlayers) return cb({ error: "Sala cheia." });
+    if (room._players.size >= room.maxPlayers) return cb({ error: "Sala cheia." });
+    if (Array.from(room._players.values()).some((p) => p.nickname.toLowerCase() === nickname.toLowerCase()))
+      return cb({ error: "Nickname já em uso." });
 
-    const nameTaken = Array.from(room.players.values()).some(
-      (p) => p.nickname.toLowerCase() === nickname.toLowerCase()
-    );
-    if (nameTaken) return cb({ error: "Nickname já está em uso nesta sala." });
-
-    const player: Player & { role: PlayerRole } = {
-      id: socket.id,
-      nickname,
-      avatar,
-      role: "citizen",
-      isAlive: true,
-      isHost: false,
-      isConnected: true,
-      votedFor: null,
-      suspicionScore: 0,
-      isSpectator: false,
-      hasUsedAbility: false,
-      abilityCooldown: 0,
-    };
-
-    room.players.set(socket.id, player);
+    const player = createPlayer(socket.id, nickname, avatar, false);
+    room._players.set(socket.id, player);
     playerRoom.set(socket.id, code.toUpperCase());
     socket.join(code.toUpperCase());
 
-    socket.to(room.code).emit("room:player_joined", { ...player, role: undefined });
-    cb({ room: getRoomInfo(room), player: { ...player } });
+    socket.to(room.code).emit("room:player_joined", player as unknown as Player);
+    cb({ room: getRoomInfo(room), player: player as unknown as Player });
   });
 
-  // ---- Sair da Sala ----
-  socket.on("room:leave", () => {
-    handleLeave(socket.id);
-  });
+  // ── Sair da Sala ───────────────────────────────────────────
+  socket.on("room:leave", () => handleLeave(socket.id));
 
-  // ---- Iniciar Jogo ----
+  // ── Iniciar Jogo ───────────────────────────────────────────
   socket.on("game:start", (cb) => {
     const code = playerRoom.get(socket.id);
-    if (!code) return cb({ error: "Você não está em uma sala." });
+    if (!code) return cb({ error: "Não está em sala." });
     const room = rooms.get(code);
     if (!room) return cb({ error: "Sala não encontrada." });
     if (room.hostId !== socket.id) return cb({ error: "Somente o host pode iniciar." });
-    if (room.players.size < 4) return cb({ error: "Mínimo de 4 jogadores." });
+    if (room._players.size < 4) return cb({ error: "Mínimo de 4 jogadores." });
     if (room.phase !== "WAITING") return cb({ error: "Jogo já iniciado." });
 
     // Distribuir papéis
-    const playerIds = Array.from(room.players.keys());
+    const playerIds = Array.from(room._players.keys());
     const roles = assignRoles(playerIds.length);
     playerIds.forEach((id, i) => {
-      const p = room.players.get(id)!;
+      const p = room._players.get(id)!;
       p.role = roles[i];
-      // Avisar cada jogador seu papel individualmente
       io.to(id).emit("game:role_assigned", roles[i]);
+      room.suspicionProfiles.set(id, 0);
     });
 
-    // Revelar aliados para assassinos (todos no time killer)
-    const killers = Array.from(room.players.values()).filter(
+    // Revelar aliados entre killers
+    const killers = Array.from(room._players.values()).filter(
       (p) => ["killer","accomplice","manipulator","silentKiller","corruptCop"].includes(p.role)
     );
     if (killers.length > 1) {
       killers.forEach((k) => {
-        const allies = killers.filter((a) => a.id !== k.id).map((a) => `${a.nickname} (${a.role})`);
+        const allies = killers
+          .filter((a) => a.id !== k.id)
+          .map((a) => `${a.nickname} (${a.role})`);
         io.to(k.id).emit("chat:message", {
-          id: generateId(),
-          playerId: "system",
-          playerNickname: "Sistema",
+          id: generateId(), playerId: "system", playerNickname: "Sistema",
           content: `🔪 Seus aliados: ${allies.join(", ")}`,
-          timestamp: Date.now(),
-          type: "private",
+          timestamp: Date.now(), type: "private",
         });
       });
     }
+
+    // Enviar mapa
+    if (room.map) io.to(room.code).emit("game:map", room.map);
+
+    // Init replay
+    initReplay(room.code);
+    recordReplayEvent(room.code, {
+      ts: Date.now(), round: 0, phase: "STARTING",
+      type: "game_started", meta: { playerCount: playerIds.length },
+    });
 
     room.phase = "STARTING";
     cb({ ok: true });
     advancePhase(io, room);
   });
 
-  // ---- Ação Noturna ----
+  // ── Ação Noturna ───────────────────────────────────────────
   socket.on("game:night_action", (data) => {
-    const code = playerRoom.get(socket.id);
-    if (!code) return;
-    const room = rooms.get(code);
-    if (!room || room.phase !== "NIGHT") return;
+    const room = rooms.get(playerRoom.get(socket.id) ?? "");
+    if (!room) return;
 
-    const player = room.players.get(socket.id);
-    if (!player || !player.isAlive) return;
+    const validation = validateNightAction(room, socket.id, (data as NightAction).targetId);
+    if (!validation.ok) {
+      socket.emit("error", validation.reason ?? "Ação inválida.");
+      return;
+    }
 
-    // Remover ação anterior do mesmo jogador
+    recordAction(room, socket.id);
     room.nightActions = room.nightActions.filter((a) => a.playerId !== socket.id);
     room.nightActions.push({ ...data, playerId: socket.id });
 
-    // Verificar se todos que têm ação já agiram
-    const ACTION_ROLES = ["killer","silentKiller","doctor","investigator","hacker","spy","corruptCop"];
-    const actionPlayers = Array.from(room.players.values()).filter(
-      (p) => p.isAlive && ACTION_ROLES.includes(p.role)
+    recordReplayEvent(room.code, {
+      ts: Date.now(), round: room.round, phase: "NIGHT",
+      type: "night_action",
+      actorId: socket.id, targetId: (data as NightAction).targetId,
+      meta: { action: (data as NightAction).action },
+    });
+
+    // Todos os que podem agir já agiram?
+    const ACTION_ROLES: PlayerRole[] = ["killer","silentKiller","doctor","investigator","hacker","spy","corruptCop"];
+    const actionPlayers = Array.from(room._players.values()).filter(
+      (p) => p.isAlive && !p.isSpectator && ACTION_ROLES.includes(p.role)
     );
     if (room.nightActions.length >= actionPlayers.length) {
       clearPhaseTimer(room);
@@ -351,78 +451,74 @@ io.on("connection", (socket) => {
     }
   });
 
-  // ---- Votar ----
+  // ── Votar ──────────────────────────────────────────────────
   socket.on("game:vote", ({ targetId }) => {
-    const code = playerRoom.get(socket.id);
-    if (!code) return;
-    const room = rooms.get(code);
-    if (!room || room.phase !== "VOTING") return;
+    const room = rooms.get(playerRoom.get(socket.id) ?? "");
+    if (!room) return;
 
-    const player = room.players.get(socket.id);
-    if (!player || !player.isAlive) return;
+    const validation = validateVote(room, socket.id, targetId);
+    if (!validation.ok) { socket.emit("error", validation.reason ?? "Voto inválido."); return; }
 
-    const target = room.players.get(targetId);
-    if (!target || !target.isAlive) return;
-
+    recordAction(room, socket.id);
     room.votes[socket.id] = targetId;
 
-    const alivePlayers = Array.from(room.players.values()).filter((p) => p.isAlive);
-    if (Object.keys(room.votes).length >= alivePlayers.length) {
+    // Track vote history para suspicion
+    if (!room.voteHistory[socket.id]) room.voteHistory[socket.id] = [];
+    room.voteHistory[socket.id].push(targetId);
+
+    recordReplayEvent(room.code, {
+      ts: Date.now(), round: room.round, phase: "VOTING",
+      type: "player_voted", actorId: socket.id, targetId,
+    });
+
+    const alive = getAlivePlayers(room);
+    if (Object.keys(room.votes).length >= alive.length) {
       clearPhaseTimer(room);
       advancePhase(io, room);
     }
   });
 
-  // ---- Chat ----
+  // ── Chat ───────────────────────────────────────────────────
   socket.on("chat:send", ({ content, type }) => {
-    const code = playerRoom.get(socket.id);
-    if (!code) return;
-    const room = rooms.get(code);
+    const room = rooms.get(playerRoom.get(socket.id) ?? "");
     if (!room) return;
 
-    const player = room.players.get(socket.id);
+    const validation = validateChat(room, socket.id, type as "public" | "private" | "whisper");
+    if (!validation.ok) { socket.emit("error", validation.reason ?? "Chat inválido."); return; }
+
+    room.chatCount[socket.id] = (room.chatCount[socket.id] ?? 0) + 1;
+
+    const player = room._players.get(socket.id);
     if (!player) return;
 
-    // Chat público só durante o dia
-    if (type === "public" && room.phase !== "DAY") return;
-
-    // Chat privado só para assassinos durante a noite
-    if (type === "private") {
-      if (room.phase !== "NIGHT") return;
-      if (player.role !== "killer" && player.role !== "accomplice") return;
-    }
-
     const msg = {
-      id: generateId(),
-      playerId: socket.id,
+      id: generateId(), playerId: socket.id,
       playerNickname: player.nickname,
       content: content.slice(0, 300),
-      timestamp: Date.now(),
-      type,
+      timestamp: Date.now(), type,
     };
 
     if (type === "public") {
-      io.to(code).emit("chat:message", msg);
+      io.to(room.code).emit("chat:message", msg);
     } else if (type === "whisper") {
-      // whisper: só remetente e destinatário
       socket.emit("chat:message", msg);
     } else {
-      // Só para assassinos
-      Array.from(room.players.values())
+      // Chat dos assassinos
+      Array.from(room._players.values())
         .filter((p) => ["killer","accomplice","manipulator","silentKiller","corruptCop"].includes(p.role))
         .forEach((p) => io.to(p.id).emit("chat:message", msg));
     }
   });
 
-  // ---- Usar Habilidade Especial ----
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  socket.on("game:use_ability", (data) => {
-    const code = playerRoom.get(socket.id);
-    if (!code) return;
-    const room = rooms.get(code);
+  // ── Usar Habilidade ────────────────────────────────────────
+  socket.on("game:use_ability", () => {
+    const room = rooms.get(playerRoom.get(socket.id) ?? "");
     if (!room) return;
-    const player = room.players.get(socket.id);
-    if (!player || !player.isAlive || player.hasUsedAbility) return;
+
+    const validation = validateAbility(room, socket.id);
+    if (!validation.ok) { socket.emit("error", validation.reason ?? "Habilidade inválida."); return; }
+
+    const player = room._players.get(socket.id)!;
 
     if (player.role === "survivor") {
       player.hasUsedAbility = true;
@@ -433,36 +529,45 @@ io.on("connection", (socket) => {
         timestamp: Date.now(), type: "private",
       });
     } else if (player.role === "informant") {
-      const killerPlayer = Array.from(room.players.values()).find(
+      const killer = Array.from(room._players.values()).find(
         (p) => p.role === "killer" || p.role === "silentKiller"
       );
       player.hasUsedAbility = true;
-      if (killerPlayer) {
+      if (killer) {
         io.to(socket.id).emit("chat:message", {
           id: generateId(), playerId: "system", playerNickname: "Sistema",
-          content: `📡 Infiltração: o assassino é **${killerPlayer.nickname}**!`,
+          content: `📡 Infiltração: o assassino é **${killer.nickname}**!`,
           timestamp: Date.now(), type: "private",
         });
       }
     }
+
+    recordReplayEvent(room.code, {
+      ts: Date.now(), round: room.round, phase: room.phase,
+      type: "ability_used", actorId: socket.id, meta: { role: player.role },
+    });
   });
 
-  // ---- Kick ----
+  // ── Obter Replay ───────────────────────────────────────────
+  socket.on("room:leave", () => {}); // já tratado acima
   socket.on("room:kick", ({ targetId }) => {
-    const code = playerRoom.get(socket.id);
-    if (!code) return;
-    const room = rooms.get(code);
+    const room = rooms.get(playerRoom.get(socket.id) ?? "");
     if (!room || room.hostId !== socket.id) return;
-
-    room.players.delete(targetId);
+    room._players.delete(targetId);
     playerRoom.delete(targetId);
     io.to(room.code).emit("room:player_left", targetId);
     broadcastRoom(io, room);
   });
 
-  // ---- Desconexão ----
+  // Expor replay ao finalizar
+  socket.on("game:get_replay" as never, (code: string) => {
+    const replay = getReplay(code);
+    if (replay) socket.emit("game:replay", replay);
+  });
+
+  // ── Desconexão ─────────────────────────────────────────────
   socket.on("disconnect", () => {
-    console.log(`[-] Disconnected: ${socket.id}`);
+    console.log(`[-] ${socket.id}`);
     handleLeave(socket.id, true);
   });
 
@@ -473,7 +578,7 @@ io.on("connection", (socket) => {
     if (!room) return;
 
     if (isDisconnect) {
-      const p = room.players.get(id);
+      const p = room._players.get(id);
       if (p) {
         p.isConnected = false;
         io.to(code).emit("player:disconnected", id);
@@ -482,29 +587,25 @@ io.on("connection", (socket) => {
       }
     }
 
-    room.players.delete(id);
+    room._players.delete(id);
     playerRoom.delete(id);
     io.to(code).emit("room:player_left", id);
 
-    if (room.players.size === 0) {
+    if (room._players.size === 0) {
       clearPhaseTimer(room);
       rooms.delete(code);
       return;
     }
 
-    // Transferir host
     if (room.hostId === id) {
-      const next = Array.from(room.players.keys())[0];
+      const next = Array.from(room._players.keys())[0];
       room.hostId = next;
-      const p = room.players.get(next);
+      const p = room._players.get(next);
       if (p) p.isHost = true;
     }
-
     broadcastRoom(io, room);
   }
 });
 
-const PORT = process.env.PORT ? parseInt(process.env.PORT) : process.env.SOCKET_PORT ? parseInt(process.env.SOCKET_PORT) : 3001;
-httpServer.listen(PORT, () => {
-  console.log(`🔌 Socket.IO server running on port ${PORT}`);
-});
+const PORT = parseInt(process.env.PORT ?? process.env.SOCKET_PORT ?? "3001");
+httpServer.listen(PORT, () => console.log(`🔌 Socket.IO server on :${PORT}`));
