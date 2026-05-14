@@ -12,7 +12,7 @@ import type {
   NightAction,
   RoomInfo,
   PlayerRole,
-} from "../../lib/types/game";
+} from "../lib/game.types";
 import {
   assignRoles,
   resolveNightActions,
@@ -23,7 +23,7 @@ import {
   generateRoomCode,
   generateId,
   PHASE_DURATIONS,
-} from "../../lib/utils/gameEngine";
+} from "../lib/gameEngine";
 
 // ---- Estruturas em Memória ----
 interface RoomState {
