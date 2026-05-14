@@ -1,13 +1,11 @@
 # 🔪 Criminal — Investigação Multiplayer
 ## Documento de Progresso
 
-> Última atualização: 14 de maio de 2026
+> Última atualização: 14 de maio de 2026 · commit `19c86c6`
 
 ---
 
-## 📋 Visão Geral do Projeto
-
-Jogo multiplayer de investigação criminal no estilo Mafia/Among Us, construído com:
+## 📋 Stack do Projeto
 
 | Camada | Tecnologia |
 |--------|-----------|
@@ -22,183 +20,228 @@ Jogo multiplayer de investigação criminal no estilo Mafia/Among Us, construíd
 
 ---
 
-## ✅ O Que Foi Feito
+## ✅ Histórico de Commits
 
-### 1. Estrutura Base
-- Projeto Next.js já existia; dependências instaladas (`framer-motion`, `socket.io-client`, `zustand`, `socket.io`)
-- Configuração de monorepo: frontend na raiz `/`, servidor em `/server/` com `package.json` próprio
-
-### 2. Engine do Jogo (`lib/utils/gameEngine.ts` + `server/lib/gameEngine.ts`)
-- Papéis: `citizen`, `doctor`, `investigator`, `killer`, `accomplice`
-- Times: `innocents` vs `killers`
-- Distribuição automática de papéis conforme número de jogadores
-- Condição de vitória: inocentes eliminam todos os assassinos OU assassinos se igualam aos inocentes
-- Eventos aleatórios (pistas falsas, etc.)
-- Nomes/ícones/times dos papéis exportados como constantes
-
-### 3. Tipos Compartilhados (`lib/types/game.ts` + `server/lib/game.types.ts`)
-- `Player`, `Room`, `GamePhase`, `PlayerRole`, `ChatMessage`
-- Eventos Socket.IO tipados: `ClientToServerEvents`, `ServerToClientEvents`
-- Cópias locais no `server/lib/` para funcionar no deploy Railway isolado
-
-### 4. Servidor Socket.IO (`server/src/server.ts`)
-- Eventos implementados:
-  - `room:create` — cria sala com código aleatório
-  - `room:join` — entra na sala
-  - `room:leave` — sai da sala
-  - `room:kick` — host expulsa jogador
-  - `game:start` — host inicia partida (mínimo 4 jogadores)
-  - `game:night_action` — ação noturna (matar/salvar/investigar)
-  - `game:vote` — votação diurna
-  - `chat:send` — mensagem pública ou privada (assassinos)
-- Loop de fases automático com timers: `WAITING → STARTING → NIGHT → DAY → VOTING → RESULT → NIGHT…`
-- CORS configurado via `CORS_ORIGIN` env var
-- Porta via `PORT` ou `SOCKET_PORT` env var (padrão 3001)
-
-### 5. Cliente Socket (`lib/socket/client.ts`)
-- Singleton com `getSocket()` / `connectSocket()` / `disconnectSocket()`
-- URL via `NEXT_PUBLIC_SOCKET_URL` (padrão `http://localhost:3001`)
-- `transports: ["websocket", "polling"]`
-- Timeout de 8s + handler de `connect_error`
-
-### 6. Store Global (`lib/store/gameStore.ts`)
-- Zustand store com: `room`, `players`, `myPlayer`, `myRole`, `phase`, `messages`, `nightResult`, `randomEvent`, `winner`
-- Ações: `setRoom`, `setMyPlayer`, `updatePlayers`, `setPhase`, `addMessage`, `reset`, etc.
-
-### 7. Hooks (`lib/hooks/useSocket.ts`)
-- `useSocketEvents()` — escuta todos os eventos do servidor e atualiza o store
-- `usePhaseTimer()` — timer regressivo sincronizado com a fase atual
-
-### 8. Componentes UI (`components/ui/index.tsx`) — tema Neo Noir
-- `Button` — variantes: `primary` (vermelho), `danger`, `ghost`, `outline`, `blue`; com Framer Motion
-- `Input` — label + error animado
-- `Card` — glassmorphism, glow opcional vermelho/azul
-- `Badge` — cores: red, green, yellow, gray, blue, purple
-- `Avatar` — emoji, tamanhos sm/md/lg/xl, estado `dead`, glow vermelho/azul
-- `FadeIn` — wrapper de animação de entrada
-- `TimerBar` — barra de progresso animada (red/blue/yellow)
-- `PulseDot` — indicador pulsante verde/vermelho/amarelo
-
-### 9. Componentes de Jogo (`components/game/index.tsx`) — tema Neo Noir
-- `PhaseBanner` — banner de fase com ícone, cor e timer regressivo
-- `PlayerCard` — card de jogador com estado (vivo/morto, selecionado, eu, host)
-- `RoleRevealCard` — revelação cinematográfica do papel (animação 3D rotateY)
-- `ChatBox` — chat com scroll automático, mensagens tipadas (público/privado/narrador/sistema)
-- `NightEventBanner` — banner de evento aleatório noturno
-- `AliveCounter` — contagem de jogadores vivos com PulseDot
-
-### 10. Páginas
-
-| Arquivo | Descrição |
-|---------|-----------|
-| `app/page.tsx` | Home: hero typewriter "QUEM É O ASSASSINO?", partículas, glassmorphism card, tabs criar/entrar, seletor de avatar, slider de jogadores, toggle sala privada |
-| `app/lobby/[code]/page.tsx` | Lobby: código da sala, lista de jogadores em tempo real, botão kick (host), regras do jogo, botão iniciar |
-| `app/game/[code]/page.tsx` | Jogo: banner de fase, grid de jogadores, ações noturnas, votação, chat (público/privado), revelação de papel |
-| `app/result/[code]/page.tsx` | Resultado: anúncio do vencedor, revelação de todos os papéis por time, botão jogar novamente |
-
-### 11. Estilização Global (`app/globals.css`) — Neo Noir
-- CSS vars: `--bg-base: #0B0F19`, `--bg-card: #1A2233`, `--red: #EF4444`, `--blue: #3B82F6`, etc.
-- Film grain via `body::after` com SVG turbulence
-- Scrollbar customizada
-- Classes utilitárias: `.glass` (glassmorphism), `.glow-red`, `.glow-blue`, `.glow-purple`
-- Animações: `@keyframes pulse-red`, `flicker`, `glitch`
-- Google Fonts: Inter + JetBrains Mono
-
-### 12. Layout (`app/layout.tsx`)
-- Título: "CRIMINAL — Investigação Multiplayer"
-- Sem fontes Geist; usa Inter via CSS
-
-### 13. Deploy
-
-#### Frontend — Vercel
-- URL: `https://criminal-woad.vercel.app`
-- Env var necessária: `NEXT_PUBLIC_SOCKET_URL=https://criminal-production.up.railway.app`
-
-#### Backend — Railway
-- URL: `https://criminal-production.up.railway.app`
-- `server/Procfile`: `web: node dist/src/server.js`
-- Env vars: `CORS_ORIGIN=https://criminal-woad.vercel.app`, `PORT` (auto Railway)
-- Build: `npm run build` (tsc) separado do start
+| Commit | Descrição |
+|--------|-----------|
+| `4ce7bd0` | Initial commit from Create Next App |
+| `730d057` | feat: jogo criminalista multiplayer — MVP completo |
+| `c9f03b2` | fix: server imports locais para deploy no Railway |
+| `3a9ca78` | docs: atualiza env.example com URL do Railway |
+| `acf871e` | fix: Procfile — apenas start sem rebuild |
+| `61d44c8` | fix: timeout de conexão e transports websocket+polling |
+| `883fa54` | feat: UI redesign Neo Noir + fix hydration particles + docs |
+| `19c86c6` | feat: sons Web Audio API + sistema de pontuação/histórico local |
 
 ---
 
-## 🐛 Bugs Corrigidos
+## ✅ O Que Já Foi Feito
 
-| Problema | Causa | Solução |
-|----------|-------|---------|
-| PostCSS parse error em `globals.css` | Comentário `//` em CSS | Removido |
-| `Unexpected end of JSON input` ao buildar | Cache corrompido do Turbopack | `rm -rf .next` |
-| Railway build fail | Server importava `../../lib/types/game` não disponível no deploy | Copiado para `server/lib/` com imports locais |
-| Procfile causava double-build | `npm run build && npm start` — Railway já builda separado | Alterado para `node dist/src/server.js` |
-| Tela de loading infinita | Sem timeout de conexão | Adicionado timeout 8s + handler `connect_error` |
-| `@import` Google Fonts quebrava CSS | Estava após `@import "tailwindcss"` (deve preceder todas as regras) | Movido para o topo do arquivo |
-| Hydration mismatch nas partículas | `Math.random()` gerava valores diferentes no SSR e no cliente | Substituído por fórmulas determinísticas baseadas no índice `i` |
+### 🏗️ Infraestrutura
+- [x] Projeto Next.js configurado (Tailwind v4, TypeScript, Framer Motion, Zustand)
+- [x] Monorepo: frontend `/` + backend `/server/`
+- [x] Deploy frontend no **Vercel** com CI/CD automático via push
+- [x] Deploy backend no **Railway** com Procfile
+- [x] CORS configurado via env var `CORS_ORIGIN`
+- [x] `NEXT_PUBLIC_SOCKET_URL` configurado no Vercel
 
----
+### 🎮 Engine do Jogo
+- [x] Papéis: `citizen`, `doctor`, `investigator`, `killer`, `accomplice`
+- [x] Distribuição automática por número de jogadores
+- [x] Condição de vitória dupla
+- [x] Fases com timers automáticos: `WAITING → STARTING → NIGHT → DAY → VOTING → RESULT → NIGHT…`
+- [x] Eventos aleatórios noturnos
+- [x] Tipos TypeScript compartilhados (frontend + cópia no server)
 
-## 🏗️ Arquitetura de Arquivos
+### 🔌 Servidor Socket.IO
+- [x] `room:create` / `room:join` / `room:leave` / `room:kick`
+- [x] `game:start` / `game:night_action` / `game:vote`
+- [x] `chat:send` (público + privado assassinos)
+- [x] Reconexão de jogadores · Estado em memória
 
-```
-/
-├── app/
-│   ├── globals.css          # Tema Neo Noir completo
-│   ├── layout.tsx           # Layout raiz
-│   ├── page.tsx             # Home page
-│   ├── lobby/[code]/
-│   │   └── page.tsx         # Lobby da sala
-│   ├── game/[code]/
-│   │   └── page.tsx         # Tela do jogo
-│   └── result/[code]/
-│       └── page.tsx         # Tela de resultado
-│
-├── components/
-│   ├── ui/index.tsx         # Button, Input, Card, Badge, Avatar, FadeIn, TimerBar, PulseDot
-│   └── game/index.tsx       # PhaseBanner, PlayerCard, RoleRevealCard, ChatBox, NightEventBanner, AliveCounter
-│
-├── lib/
-│   ├── hooks/useSocket.ts   # useSocketEvents, usePhaseTimer
-│   ├── socket/client.ts     # Singleton Socket.IO client
-│   ├── store/gameStore.ts   # Zustand store
-│   ├── types/game.ts        # Tipos TypeScript compartilhados
-│   └── utils/gameEngine.ts  # Lógica do jogo (papéis, times, vitória)
-│
-├── server/
-│   ├── src/server.ts        # Servidor Socket.IO completo
-│   ├── lib/
-│   │   ├── game.types.ts    # Cópia dos tipos para o server
-│   │   └── gameEngine.ts    # Cópia da engine para o server
-│   ├── Procfile             # Railway: web: node dist/src/server.js
-│   ├── package.json
-│   └── tsconfig.json
-│
-├── vercel.json
-├── next.config.ts
-├── package.json
-└── tsconfig.json
-```
+### 🎨 UI/UX — Tema Neo Noir
+- [x] CSS vars, film grain, glassmorphism, glow, animações
+- [x] Google Fonts: Inter + JetBrains Mono
+- [x] Componentes: Button, Input, Card, Badge, Avatar, FadeIn, TimerBar, PulseDot
+- [x] Componentes de jogo: PhaseBanner, PlayerCard, RoleRevealCard, ChatBox, AliveCounter
+- [x] Home: hero typewriter, partículas, avatares, tabs criar/entrar
+- [x] Lobby · Jogo (fundo escurece à noite) · Resultado (glow por time)
+
+### 🔊 Sons — Web Audio API (zero deps)
+- [x] `lib/utils/sounds.ts` — 10 efeitos sintetizados:
+  - playJoin · playGameStart · playNight · playDay
+  - playEliminated · playVote · playVictory · playDefeat
+  - playTick (timer < 10s) · playMessage
+- [x] Integrados no `useSocketEvents` e `usePhaseTimer`
+
+### 📊 Sistema de Pontuação
+- [x] `lib/utils/score.ts` — recordMatch, getStats, clearHistory
+- [x] Persiste no `localStorage` (últimas 100 partidas)
+- [x] Stats: winrate, W/L, sequências, papel favorito
+- [x] Página `/stats` com histórico e limpeza de dados
+- [x] Registra automaticamente ao fim de cada partida
+- [x] Link na Home e botão 📊 no resultado
+
+### 🐛 Bugs Corrigidos
+- [x] `//` CSS → parse error PostCSS
+- [x] Cache corrompido Turbopack → `rm -rf .next`
+- [x] Railway: imports locais copiados para `server/lib/`
+- [x] Procfile: double-build removido
+- [x] Timeout 8s + `connect_error` handler
+- [x] `@import` Google Fonts movido para o topo do CSS
+- [x] Hydration mismatch nas partículas → fórmulas determinísticas
 
 ---
 
 ## 🚀 Como Rodar Localmente
 
 ```bash
-# Terminal 1 — Frontend (Next.js)
-npm run dev
-# → http://localhost:3000
+# Terminal 1 — Frontend
+npm run dev                          # http://localhost:3000
 
-# Terminal 2 — Backend (Socket.IO)
+# Terminal 2 — Backend
 cd server
 node_modules/.bin/ts-node --project tsconfig.json src/server.ts
-# → http://localhost:3001
+                                     # http://localhost:3001
 ```
 
 ---
 
-## ⏳ Pendente / Próximos Passos
+## 🗺️ Arquitetura de Arquivos
 
-- [ ] Commit e push do redesign Neo Noir (`git add -A && git commit -m "feat: UI redesign Neo Noir" && git push origin main`)
-- [ ] Redeploy no Vercel após push
-- [ ] Testar fluxo completo com múltiplos jogadores em produção
-- [ ] (Opcional) Adicionar sons/efeitos sonoros
-- [ ] (Opcional) Persistência de salas com Redis no Railway
-- [ ] (Opcional) Sistema de pontuação / histórico de partidas
+```
+/
+├── app/
+│   ├── globals.css              # Tema Neo Noir
+│   ├── layout.tsx
+│   ├── page.tsx                 # Home
+│   ├── stats/page.tsx           # ✅ Estatísticas
+│   ├── lobby/[code]/page.tsx
+│   ├── game/[code]/page.tsx
+│   └── result/[code]/page.tsx
+├── components/
+│   ├── ui/index.tsx             # Button, Card, Badge, Avatar...
+│   └── game/index.tsx           # PhaseBanner, PlayerCard...
+├── lib/
+│   ├── hooks/useSocket.ts
+│   ├── socket/client.ts
+│   ├── store/gameStore.ts
+│   ├── types/game.ts
+│   └── utils/
+│       ├── gameEngine.ts
+│       ├── sounds.ts            # ✅ Sons Web Audio API
+│       └── score.ts             # ✅ Pontuação/histórico
+└── server/
+    ├── src/server.ts
+    ├── lib/game.types.ts
+    ├── lib/gameEngine.ts
+    └── Procfile
+```
+
+---
+
+## 🔜 Backlog de Upgrades
+
+### 🔴 Alta Prioridade — Qualidade do Jogo
+
+#### 1. Reconexão Inteligente
+- Salvar `roomCode` + `playerId` no `sessionStorage`
+- Ao reabrir a aba, detectar partida em andamento e redirecionar
+- Servidor manter slot por 60s antes de remover desconectado
+
+#### 2. Lista de Salas Públicas
+- Página `/rooms` listando salas abertas com nº de jogadores
+- Botão "Entrar em sala aleatória"
+- Atualização em tempo real via socket
+
+#### 3. Reveal Cinematográfico de Papel Melhorado
+- Tela fullscreen com glitch/flicker por 3s antes de revelar
+- Som diferente para assassino vs inocente
+- Tremor de tela (`animation: shake`) para killer
+
+#### 4. Timer Visual Circular
+- SVG circular no lugar da barra linear
+- Pulso vermelho nos últimos 5s
+- Vibração háptica no mobile (Vibration API)
+
+---
+
+### 🟡 Média Prioridade — Experiência
+
+#### 5. Tutorial Interativo / Onboarding
+- Fluxo na primeira visita (flag no `localStorage`)
+- Passo a passo animado por fase
+- Tooltips nos papéis
+
+#### 6. Lobby Animado
+- Animação de "cartas sendo distribuídas"
+- Avatar com bounce enquanto espera
+- Countdown ao clicar em Iniciar
+
+#### 7. Modo Espectador
+- Eliminados viram espectadores (sem votar/agir)
+- Chat separado para espectadores
+- Overlay diferenciado
+
+#### 8. Chat Melhorado
+- Reações a mensagens (👍 😱 🤔)
+- Indicador "digitando…"
+- Painel de emojis rápidos
+
+---
+
+### 🟢 Baixa Prioridade — Features Extras
+
+#### 9. PWA / Instalável
+- `manifest.json` + service worker
+- Notificação push quando for a vez de agir
+
+#### 10. Customização de Sala
+- Duração das fases (rápido / normal / longo)
+- Habilitar/desabilitar papéis específicos
+- Modo "Mafia Clássica" sem papéis especiais
+
+#### 11. Replay de Partida
+- Log completo de eventos salvo no resultado
+- Timeline "Noite 1: X matou Y, médico salvou W"
+- Compartilhável via link
+
+#### 12. Temas Visuais
+- Seletor: Neo Noir (atual) / Cyberpunk / Medieval / Espaço
+- CSS vars trocados dinamicamente
+
+#### 13. Internacionalização
+- `next-intl` para PT-BR / EN / ES
+
+---
+
+### ⚙️ Técnico / DevOps
+
+#### 14. Testes Automatizados
+- Unit tests na `gameEngine.ts` com Vitest
+- E2E com Playwright: criar sala → jogar → resultado
+
+#### 15. CI/CD Completo
+- GitHub Actions: lint + type-check + tests em cada PR
+
+#### 16. Monitoramento
+- Sentry (erros frontend/backend)
+- Uptime monitor para o Railway
+
+#### 17. Persistência com Redis (Railway)
+- Salas sobrevivem a restart do servidor
+- Rate limiting por IP
+- Histórico de partidas por sessão
+
+---
+
+## 💡 Novos Papéis Sugeridos
+
+| Papel | Time | Habilidade |
+|-------|------|-----------|
+| 🕵️ Xerife | Inocentes | Bloqueia o voto de um suspeito |
+| 🎭 Coringa | Neutro | Vence se for eliminado por votação |
+| 💣 Terrorista | Assassinos | Ao morrer, leva um inocente junto |
+| �� Vidente | Inocentes | Vê o resultado de uma votação antecipado |
+| 🧛 Vampiro | Assassinos | Converte inocentes em vez de matar |
+| 🤡 Bobo | Neutro | Vence se convencer todos que é o assassino |

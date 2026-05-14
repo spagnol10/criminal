@@ -10,6 +10,11 @@ import type {
   TeamWinner,
   RandomEvent,
   RoomInfo,
+  Evidence,
+  SuspicionProfile,
+  MatchEvent,
+  PostGameStats,
+  GameMap,
 } from "../types/game";
 
 interface GameStore extends GameState {
@@ -27,6 +32,12 @@ interface GameStore extends GameState {
   updatePlayer: (id: string, data: Partial<Player>) => void;
   removePlayer: (id: string) => void;
   addPlayer: (player: Player) => void;
+  // v2 setters
+  addEvidence: (ev: Evidence) => void;
+  setSuspicionProfiles: (profiles: SuspicionProfile[]) => void;
+  addMatchEvent: (ev: MatchEvent) => void;
+  setPostGameStats: (stats: PostGameStats) => void;
+  setGameMap: (map: GameMap) => void;
   reset: () => void;
 }
 
@@ -43,6 +54,14 @@ const initialState: GameState = {
   phaseTimer: 0,
   myPlayer: null,
   myRole: null,
+  // v2
+  activeEvents: [],
+  map: null,
+  evidence: [],
+  suspicionProfiles: [],
+  matchEvents: [],
+  postGameStats: null,
+  gameMode: "normal",
 };
 
 export const useGameStore = create<GameStore>((set) => ({
@@ -81,18 +100,14 @@ export const useGameStore = create<GameStore>((set) => ({
     set((s) => ({ messages: [...s.messages.slice(-200), msg] })),
 
   setNightResult: (nightResult) => set({ nightResult }),
-
   setVoteResult: (voteResult) => set({ voteResult }),
-
   setWinner: (winner, players) => set({ winner, players, phase: "FINISHED" }),
-
   setRandomEvent: (randomEvent) => set({ randomEvent }),
 
   updatePlayer: (id, data) =>
     set((s) => ({
       players: s.players.map((p) => (p.id === id ? { ...p, ...data } : p)),
-      myPlayer:
-        s.myPlayer?.id === id ? { ...s.myPlayer, ...data } : s.myPlayer,
+      myPlayer: s.myPlayer?.id === id ? { ...s.myPlayer, ...data } : s.myPlayer,
     })),
 
   removePlayer: (id) =>
@@ -104,6 +119,19 @@ export const useGameStore = create<GameStore>((set) => ({
         ? s.players
         : [...s.players, player],
     })),
+
+  // v2
+  addEvidence: (ev) =>
+    set((s) => ({ evidence: [...s.evidence, ev] })),
+
+  setSuspicionProfiles: (suspicionProfiles) => set({ suspicionProfiles }),
+
+  addMatchEvent: (ev) =>
+    set((s) => ({ matchEvents: [...s.matchEvents, ev] })),
+
+  setPostGameStats: (postGameStats) => set({ postGameStats }),
+
+  setGameMap: (map) => set({ map }),
 
   reset: () => set(initialState),
 }));

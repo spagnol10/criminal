@@ -33,11 +33,17 @@ export function useSocketEvents() {
     socket.on("game:night_result", (r) => { store.setNightResult(r); if (r.killedId) playEliminated(); });
     socket.on("game:vote_result", (r) => { store.setVoteResult(r); playEliminated(); });
     socket.on("game:event", (e) => store.setRandomEvent(e));
+    // v2 new events
+    socket.on("game:evidence", (ev) => store.addEvidence(ev));
+    socket.on("game:suspicion_update", (profiles) => store.setSuspicionProfiles(profiles));
+    socket.on("game:map", (map) => store.setGameMap(map));
+
     socket.on("game:finished", ({ winner, players }) => {
       store.setWinner(winner, players);
       const myRole = useGameStore.getState().myRole;
+      const killerRoles = ["killer","accomplice","manipulator","silentKiller","corruptCop"];
       const myTeam = myRole
-        ? (["killer","accomplice"].includes(myRole) ? "killers" : "innocents")
+        ? (killerRoles.includes(myRole) ? "killers" : "innocents")
         : null;
       if (myTeam === winner) playVictory(); else playDefeat();
     });
@@ -62,6 +68,9 @@ export function useSocketEvents() {
       socket.off("game:night_result");
       socket.off("game:vote_result");
       socket.off("game:event");
+      socket.off("game:evidence");
+      socket.off("game:suspicion_update");
+      socket.off("game:map");
       socket.off("game:finished");
       socket.off("chat:message");
       socket.off("player:disconnected");

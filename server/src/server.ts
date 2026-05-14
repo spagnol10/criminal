@@ -216,6 +216,10 @@ io.on("connection", (socket) => {
       isHost: true,
       isConnected: true,
       votedFor: null,
+      suspicionScore: 0,
+      isSpectator: false,
+      hasUsedAbility: false,
+      abilityCooldown: 0,
     };
 
     const room: RoomState = {
@@ -260,6 +264,10 @@ io.on("connection", (socket) => {
       isHost: false,
       isConnected: true,
       votedFor: null,
+      suspicionScore: 0,
+      isSpectator: false,
+      hasUsedAbility: false,
+      abilityCooldown: 0,
     };
 
     room.players.set(socket.id, player);
@@ -295,13 +303,13 @@ io.on("connection", (socket) => {
       io.to(id).emit("game:role_assigned", roles[i]);
     });
 
-    // Revelar aliados para assassinos
+    // Revelar aliados para assassinos (todos no time killer)
     const killers = Array.from(room.players.values()).filter(
-      (p) => p.role === "killer" || p.role === "accomplice"
+      (p) => ["killer","accomplice","manipulator","silentKiller","corruptCop"].includes(p.role)
     );
     if (killers.length > 1) {
       killers.forEach((k) => {
-        const allies = killers.filter((a) => a.id !== k.id).map((a) => a.nickname);
+        const allies = killers.filter((a) => a.id !== k.id).map((a) => `${a.nickname} (${a.role})`);
         io.to(k.id).emit("chat:message", {
           id: generateId(),
           playerId: "system",
@@ -332,11 +340,10 @@ io.on("connection", (socket) => {
     room.nightActions = room.nightActions.filter((a) => a.playerId !== socket.id);
     room.nightActions.push({ ...data, playerId: socket.id });
 
-    // Verificar se todos que têm ação já votaram
+    // Verificar se todos que têm ação já agiram
+    const ACTION_ROLES = ["killer","silentKiller","doctor","investigator","hacker","spy","corruptCop"];
     const actionPlayers = Array.from(room.players.values()).filter(
-      (p) =>
-        p.isAlive &&
-        (p.role === "killer" || p.role === "doctor" || p.role === "investigator")
+      (p) => p.isAlive && ACTION_ROLES.includes(p.role)
     );
     if (room.nightActions.length >= actionPlayers.length) {
       clearPhaseTimer(room);
@@ -396,11 +403,47 @@ io.on("connection", (socket) => {
 
     if (type === "public") {
       io.to(code).emit("chat:message", msg);
+    } else if (type === "whisper") {
+      // whisper: só remetente e destinatário
+      socket.emit("chat:message", msg);
     } else {
       // Só para assassinos
       Array.from(room.players.values())
-        .filter((p) => p.role === "killer" || p.role === "accomplice")
+        .filter((p) => ["killer","accomplice","manipulator","silentKiller","corruptCop"].includes(p.role))
         .forEach((p) => io.to(p.id).emit("chat:message", msg));
+    }
+  });
+
+  // ---- Usar Habilidade Especial ----
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  socket.on("game:use_ability", (data) => {
+    const code = playerRoom.get(socket.id);
+    if (!code) return;
+    const room = rooms.get(code);
+    if (!room) return;
+    const player = room.players.get(socket.id);
+    if (!player || !player.isAlive || player.hasUsedAbility) return;
+
+    if (player.role === "survivor") {
+      player.hasUsedAbility = true;
+      player.abilityCooldown = 2;
+      io.to(socket.id).emit("chat:message", {
+        id: generateId(), playerId: "system", playerNickname: "Sistema",
+        content: "🛡️ Escudo ativado! Você está protegido nesta noite.",
+        timestamp: Date.now(), type: "private",
+      });
+    } else if (player.role === "informant") {
+      const killerPlayer = Array.from(room.players.values()).find(
+        (p) => p.role === "killer" || p.role === "silentKiller"
+      );
+      player.hasUsedAbility = true;
+      if (killerPlayer) {
+        io.to(socket.id).emit("chat:message", {
+          id: generateId(), playerId: "system", playerNickname: "Sistema",
+          content: `📡 Infiltração: o assassino é **${killerPlayer.nickname}**!`,
+          timestamp: Date.now(), type: "private",
+        });
+      }
     }
   });
 

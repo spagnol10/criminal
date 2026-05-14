@@ -104,13 +104,25 @@ export function PlayerCard({
 
 // ── Role Reveal Card ──────────────────────────────────────────────────────────
 export function RoleRevealCard({ role }: { role: PlayerRole }) {
-  const isEvil = ["killer", "accomplice"].includes(role);
+  const killerRoles = ["killer", "accomplice", "manipulator", "silentKiller", "corruptCop"];
+  const neutralRoles = ["ghost", "survivor", "traitor"];
+  const isEvil = killerRoles.includes(role);
+  const isNeutral = neutralRoles.includes(role);
   const descriptions: Record<PlayerRole, string> = {
     citizen:      "Sobreviva e ajude a identificar o assassino nas discussões do dia.",
     doctor:       "Cada noite você pode salvar uma pessoa da morte. Escolha com sabedoria.",
     investigator: "Cada noite investigue um suspeito e descubra se é culpado ou inocente.",
     killer:       "Você deve eliminar os inocentes sem ser descoberto pela cidade.",
     accomplice:   "Apoie o assassino. Saiba a identidade dele e proteja-o.",
+    informant:    "Uma vez por partida descubra o nome de um assassino. Use sua informação com cuidado.",
+    hacker:       "Hackeie jogadores à noite para descobrir seus papéis exatos.",
+    manipulator:  "Plante mentiras, force votos e destrua a confiança entre os inocentes.",
+    ghost:        "Você voltou do além. Sobreviva até o fim — independente de quem vencer.",
+    silentKiller: "Mata sem deixar rastros. Invisível ao Espião. Letal e silencioso.",
+    corruptCop:   "Use sua autoridade para bloquear investigações e proteger os assassinos.",
+    survivor:     "Seu único objetivo: estar vivo quando a partida terminar.",
+    traitor:      "Vença sendo eliminado por votação. Provoce. Seja suspeito. Provoque sua própria condenação.",
+    spy:          "Observe os movimentos noturnos. Descubra quem age nas sombras.",
   };
 
   return (
@@ -121,6 +133,8 @@ export function RoleRevealCard({ role }: { role: PlayerRole }) {
       className={`border rounded-2xl p-8 text-center max-w-sm mx-auto ${
         isEvil
           ? "bg-linear-to-br from-red-950/60 to-[#0B0F19] border-red-800/50 shadow-2xl shadow-red-950/50"
+          : isNeutral
+          ? "bg-linear-to-br from-yellow-950/60 to-[#0B0F19] border-yellow-800/50 shadow-2xl shadow-yellow-950/50"
           : "bg-linear-to-br from-blue-950/60 to-[#0B0F19] border-blue-800/50 shadow-2xl shadow-blue-950/50"
       }`}
     >
@@ -132,14 +146,14 @@ export function RoleRevealCard({ role }: { role: PlayerRole }) {
       >
         {ROLE_ICONS[role]}
       </motion.div>
-      <h2 className={`text-3xl font-black tracking-widest uppercase mb-3 ${isEvil ? "text-red-300 glow-red" : "text-blue-300 glow-blue"}`}>
+      <h2 className={`text-3xl font-black tracking-widest uppercase mb-3 ${isEvil ? "text-red-300 glow-red" : isNeutral ? "text-yellow-300" : "text-blue-300 glow-blue"}`}>
         {ROLE_NAMES[role]}
       </h2>
       <p className="text-gray-500 text-sm leading-relaxed">{descriptions[role]}</p>
       <div className={`mt-5 px-4 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-[0.2em] inline-block ${
-        isEvil ? "bg-red-900/40 text-red-400 border border-red-800/40" : "bg-blue-900/40 text-blue-400 border border-blue-800/40"
+        isEvil ? "bg-red-900/40 text-red-400 border border-red-800/40" : isNeutral ? "bg-yellow-900/40 text-yellow-400 border border-yellow-800/40" : "bg-blue-900/40 text-blue-400 border border-blue-800/40"
       }`}>
-        {isEvil ? "🔴 Assassinos" : "🔵 Inocentes"}
+        {isEvil ? "🔴 Assassinos" : isNeutral ? "🟡 Neutro" : "🔵 Inocentes"}
       </div>
     </motion.div>
   );
