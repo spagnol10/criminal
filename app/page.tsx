@@ -26,11 +26,26 @@ export default function HomePage() {
     if (!nickname.trim()) return setError("Digite um nickname.");
     setLoading(true);
     setError("");
+
     const socket = connectSocket();
+
+    // Timeout de conexão
+    const timeout = setTimeout(() => {
+      setLoading(false);
+      setError("Não foi possível conectar ao servidor. Tente novamente.");
+    }, 8000);
+
+    socket.once("connect_error", () => {
+      clearTimeout(timeout);
+      setLoading(false);
+      setError("Erro de conexão com o servidor. Tente novamente.");
+    });
+
     socket.emit(
       "room:create",
       { nickname: nickname.trim(), avatar, maxPlayers, isPrivate },
       (res) => {
+        clearTimeout(timeout);
         setLoading(false);
         if ("error" in res) return setError(String(res.error));
         setMyPlayer(res.player);
@@ -45,11 +60,25 @@ export default function HomePage() {
     if (!roomCode.trim()) return setError("Digite o código da sala.");
     setLoading(true);
     setError("");
+
     const socket = connectSocket();
+
+    const timeout = setTimeout(() => {
+      setLoading(false);
+      setError("Não foi possível conectar ao servidor. Tente novamente.");
+    }, 8000);
+
+    socket.once("connect_error", () => {
+      clearTimeout(timeout);
+      setLoading(false);
+      setError("Erro de conexão com o servidor. Tente novamente.");
+    });
+
     socket.emit(
       "room:join",
       { code: roomCode.trim().toUpperCase(), nickname: nickname.trim(), avatar },
       (res) => {
+        clearTimeout(timeout);
         setLoading(false);
         if ("error" in res) return setError(String(res.error));
         setMyPlayer(res.player);
