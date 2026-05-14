@@ -2,6 +2,7 @@
 
 # dependencies
 /node_modules
+/server/node_modules
 /.pnp
 .pnp.*
 .yarn/*
@@ -17,6 +18,9 @@
 /.next/
 /out/
 
+# server build (Railway faz o build automaticamente)
+/server/dist/
+
 # production
 /build
 
@@ -30,8 +34,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files
 .env*
+!.env.example
 
 # vercel
 .vercel

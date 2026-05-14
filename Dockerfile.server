@@ -1,0 +1,18 @@
+FROM node:20-alpine AS base
+
+# Server
+FROM base AS server-builder
+WORKDIR /app
+COPY server/package*.json ./server/
+COPY lib/ ./lib/
+RUN cd server && npm install
+COPY server/ ./server/
+RUN cd server && npm run build
+
+FROM base AS server
+WORKDIR /app
+COPY --from=server-builder /app/server/dist ./dist
+COPY --from=server-builder /app/server/node_modules ./node_modules
+COPY --from=server-builder /app/lib ./lib
+EXPOSE 3001
+CMD ["node", "dist/src/server.js"]

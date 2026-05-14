@@ -1,0 +1,21 @@
+{
+  "name": "jogo-criminalista-server",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "ts-node --project tsconfig.json src/server.ts",
+    "build": "tsc",
+    "start": "node dist/src/server.js"
+  },
+  "dependencies": {
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "ts-node": "^10.9.2",
+    "typescript": "^5"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
