@@ -301,6 +301,15 @@ export default function HomePage() {
         <p className="text-center text-gray-700 text-[10px] mt-5 font-mono tracking-wider">
           MIN 4 · MAX 12 JOGADORES
         </p>
+
+        <div className="text-center mt-3">
+          <button
+            onClick={() => router.push("/stats")}
+            className="text-gray-700 hover:text-gray-400 text-[10px] uppercase tracking-widest font-semibold transition-colors"
+          >
+            📊 Minhas Estatísticas
+          </button>
+        </div>
       </motion.div>
     </main>
   );

@@ -1,11 +1,12 @@
 "use client";
-import { use } from "react";
+import { use, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { useGameStore } from "../../../lib/store/gameStore";
 import { useSocketEvents } from "../../../lib/hooks/useSocket";
 import { Button, Card, FadeIn, Avatar } from "../../../components/ui";
 import { ROLE_NAMES, ROLE_ICONS, ROLE_TEAM } from "../../../lib/utils/gameEngine";
+import { recordMatch } from "../../../lib/utils/score";
 import type { Player, PlayerRole } from "../../../lib/types/game";
 
 export default function ResultPage({ params }: { params: Promise<{ code: string }> }) {
@@ -17,6 +18,19 @@ export default function ResultPage({ params }: { params: Promise<{ code: string 
 
   const myTeam = myRole ? ROLE_TEAM[myRole] : null;
   const iWon = myTeam === winner;
+
+  // Registra partida no histórico local
+  useEffect(() => {
+    if (!myRole || !winner) return;
+    recordMatch({
+      role: myRole,
+      team: myTeam as "killers" | "innocents",
+      winner: winner as "killers" | "innocents",
+      won: iWon,
+      players: players.length,
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function playAgain() {
     useGameStore.getState().reset();
@@ -92,9 +106,14 @@ export default function ResultPage({ params }: { params: Promise<{ code: string 
         </FadeIn>
 
         <FadeIn delay={0.5}>
-          <Button size="lg" className="w-full" onClick={playAgain}>
-            🔄 Jogar Novamente
-          </Button>
+          <div className="flex gap-3">
+            <Button size="lg" className="flex-1" onClick={playAgain}>
+              🔄 Jogar Novamente
+            </Button>
+            <Button size="lg" variant="outline" onClick={() => router.push("/stats")}>
+              📊
+            </Button>
+          </div>
         </FadeIn>
       </div>
     </main>

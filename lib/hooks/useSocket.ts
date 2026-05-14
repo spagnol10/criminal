@@ -3,6 +3,10 @@ import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { connectSocket } from "../socket/client";
 import { useGameStore } from "../store/gameStore";
+import {
+  playJoin, playGameStart, playNight, playDay,
+  playEliminated, playVictory, playDefeat, playTick, playMessage,
+} from "../utils/sounds";
 
 export function useSocketEvents() {
   const router = useRouter();
@@ -16,21 +20,29 @@ export function useSocketEvents() {
     const socket = connectSocket();
 
     socket.on("room:updated", store.setRoom);
-    socket.on("room:player_joined", store.addPlayer);
+    socket.on("room:player_joined", (p) => { store.addPlayer(p); playJoin(); });
     socket.on("room:player_left", store.removePlayer);
 
-    socket.on("game:phase_changed", ({ phase, timer }) =>
-      store.setPhase(phase, timer)
-    );
+    socket.on("game:phase_changed", ({ phase, timer }) => {
+      store.setPhase(phase, timer);
+      if (phase === "STARTING") playGameStart();
+      else if (phase === "NIGHT")   playNight();
+      else if (phase === "DAY")     playDay();
+    });
     socket.on("game:role_assigned", store.setMyRole);
-    socket.on("game:night_result", store.setNightResult);
-    socket.on("game:vote_result", store.setVoteResult);
+    socket.on("game:night_result", (r) => { store.setNightResult(r); if (r.killedId) playEliminated(); });
+    socket.on("game:vote_result", (r) => { store.setVoteResult(r); playEliminated(); });
     socket.on("game:event", (e) => store.setRandomEvent(e));
-    socket.on("game:finished", ({ winner, players }) =>
-      store.setWinner(winner, players)
-    );
+    socket.on("game:finished", ({ winner, players }) => {
+      store.setWinner(winner, players);
+      const myRole = useGameStore.getState().myRole;
+      const myTeam = myRole
+        ? (["killer","accomplice"].includes(myRole) ? "killers" : "innocents")
+        : null;
+      if (myTeam === winner) playVictory(); else playDefeat();
+    });
 
-    socket.on("chat:message", store.addMessage);
+    socket.on("chat:message", (m) => { store.addMessage(m); playMessage(); });
 
     socket.on("player:disconnected", (id) =>
       store.updatePlayer(id, { isConnected: false })
@@ -80,7 +92,9 @@ export function usePhaseTimer() {
   useEffect(() => {
     if (timer <= 0) return;
     const interval = setInterval(() => {
-      setTimer(Math.max(0, timer - 1));
+      const next = Math.max(0, timer - 1);
+      setTimer(next);
+      if (next > 0 && next <= 10) playTick();
     }, 1000);
     return () => clearInterval(interval);
   }, [timer, setTimer]);
