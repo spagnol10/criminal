@@ -304,10 +304,22 @@ export default function HomePage() {
 
         <div className="text-center mt-3 flex flex-col gap-2">
           <button
+            onClick={() => router.push("/investigation")}
+            className="text-amber-600 hover:text-amber-400 text-[10px] uppercase tracking-widest font-semibold transition-colors border border-amber-900/40 rounded-lg py-2 px-4 hover:border-amber-600/40 hover:bg-amber-950/20"
+          >
+            🔍 Investigação Narrativa
+          </button>
+          <button
             onClick={() => router.push("/solo")}
             className="text-gray-500 hover:text-gray-300 text-[10px] uppercase tracking-widest font-semibold transition-colors border border-white/6 rounded-lg py-2 px-4 hover:border-white/12"
           >
             🤖 Jogar Solo (vs Bots)
+          </button>
+          <button
+            onClick={() => router.push("/investigation")}
+            className="text-amber-700 hover:text-amber-400 text-[10px] uppercase tracking-widest font-semibold transition-colors border border-amber-900/30 rounded-lg py-2 px-4 hover:border-amber-700/50"
+          >
+            🔍 Investigação Narrativa
           </button>
           <button
             onClick={() => router.push("/stats")}
